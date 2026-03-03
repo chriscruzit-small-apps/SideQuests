@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pip-Boy 3000: Secure Vault</title>
+    <link href="https://fonts.googleapis.com/css2?family=VT323&display=swap" rel="stylesheet">
+    <style>
+        :root { --pip-green: #1aff80; --pip-green-dim: rgba(26, 255, 128, 0.3); --bg-color: #050a05; }
+        body { background-color: var(--bg-color); color: var(--pip-green); font-family: 'VT323', monospace; margin: 0; padding: 20px; text-transform: uppercase; }
+        
+        /* CRT Effect */
+        body::before { content: " "; display: block; position: fixed; top: 0; left: 0; bottom: 0; right: 0; background: linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.25) 50%), linear-gradient(90deg, rgba(255, 0, 0, 0.06), rgba(0, 255, 0, 0.02), rgba(0, 0, 255, 0.06)); z-index: 10; background-size: 100% 4px, 3px 100%; pointer-events: none; }
+
+        .container { max-width: 600px; margin: 0 auto; border: 2px solid var(--pip-green); padding: 20px; box-shadow: 0 0 15px var(--pip-green-dim); }
+        h1 { text-align: center; font-size: 2.5rem; text-shadow: 0 0 8px var(--pip-green); }
+        
+        /* Login Screen */
+        #login-screen { text-align: center; padding: 50px 10px; }
+        
+        /* App Screen (Hidden by default) */
+        #app-screen { display: none; }
+
+        .input-group { display: flex; gap: 10px; margin-bottom: 20px; }
+        input { background: transparent; border: 1px solid var(--pip-green); color: var(--pip-green); font-family: 'VT323', monospace; padding: 10px; font-size: 1.2rem; width: 100%; box-sizing: border-box; }
+        button { background: var(--pip-green); color: black; border: none; padding: 10px 20px; font-family: 'VT323', monospace; font-weight: bold; cursor: pointer; font-size: 1.2rem; }
+        
+        .quest-item { border: 1px solid var(--pip-green-dim); margin-bottom: 10px; padding: 15px; display: flex; justify-content: space-between; align-items: center; }
+        .completed { opacity: 0.4; text-decoration: line-through; }
+        .quest-reward { color: #ffce00; font-size: 0.9rem; }
+        .logout-btn { background: transparent; color: red; border: 1px solid red; font-size: 0.8rem; margin-top: 20px; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <!-- LOGIN SCREEN -->
+    <div id="login-screen">
+        <h1>VAULT ACCESS REQUIRED</h1>
+        <p>ENTER SHARED VAULT KEY TO SYNC DATA</p>
+        <input type="password" id="vaultKeyInput" placeholder="Vault Access Code...">
+        <br><br>
+        <button onclick="accessVault()">INITIALIZE SYNC</button>
+    </div>
+
+    <!-- MAIN APP SCREEN -->
+    <div id="app-screen">
+        <div style="display:flex; justify-content: space-between; font-size: 0.8rem; border-bottom: 1px solid var(--pip-green); margin-bottom: 10px;">
+            <span id="display-vault">VAULT: ---</span>
+            <span id="sync-status">STATUS: ONLINE</span>
+        </div>
+        <h1>SIDE QUESTS</h1>
+        <div class="input-group">
+            <input type="text" id="questInput" placeholder="New Quest...">
+            <input type="text" id="rewardInput" placeholder="XP" style="width: 70px;">
+            <button onclick="addQuest()">ADD</button>
+        </div>
+        <div id="questList"></div>
+        <button class="logout-btn" onclick="logout()">LOGOUT / DISCONNECT</button>
+    </div>
+</div>
+
+<script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-app.js"></script>
+<script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-auth.js"></script>
+<script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-firestore.js"></script>
+
+<script>
+    // --- PASTE YOUR FIREBASE CONFIG HERE ---
+    const firebaseConfig = {
+	  apiKey: "AIzaSyDPtxLIPFSS42bM5M3xBTi2icL-PV0pUFc",
+	  authDomain: "sidequests-361b3.firebaseapp.com",
+	  projectId: "sidequests-361b3",
+	  storageBucket: "sidequests-361b3.firebasestorage.app",
+	  messagingSenderId: "256430926601",
+	  appId: "1:256430926601:web:04cfdcd465e949de8081d8",
+	  measurementId: "G-4PY1QD9LR5"
+	};
+    // ---------------------------------------
+
+    firebase.initializeApp(firebaseConfig);
+    const db = firebase.firestore();
+    const auth = firebase.auth();
+
+    let currentVault = localStorage.getItem('vaultKey');
+
+    // Check if we are already logged in
+    auth.onAuthStateChanged((user) => {
+        if (user && currentVault) {
+            showApp();
+        } else {
+            showLogin();
+        }
+    });
+
+    async function accessVault() {
+        const key = document.getElementById('vaultKeyInput').value.trim().toLowerCase();
+        if (!key) return alert("Enter a key!");
+        
+        try {
+            await auth.signInAnonymously();
+            localStorage.setItem('vaultKey', key);
+            currentVault = key;
+            showApp();
+        } catch (error) {
+            alert("Connection Error: " + error.message);
+        }
+    }
+
+    function showApp() {
+        document.getElementById('login-screen').style.display = 'none';
+        document.getElementById('app-screen').style.display = 'block';
+        document.getElementById('display-vault').innerText = `VAULT: ${currentVault}`;
+        loadQuests();
+    }
+
+    function showLogin() {
+        document.getElementById('login-screen').style.display = 'block';
+        document.getElementById('app-screen').style.display = 'none';
+    }
+
+    function loadQuests() {
+        // We store quests inside a collection named after your secret Vault Key
+        db.collection("vaults").doc(currentVault).collection("sidequests")
+            .orderBy("createdAt", "desc")
+            .onSnapshot((snapshot) => {
+                const listDiv = document.getElementById('questList');
+                listDiv.innerHTML = '';
+                snapshot.forEach((doc) => {
+                    const q = doc.data();
+                    const item = document.createElement('div');
+                    item.className = `quest-item ${q.completed ? 'completed' : ''}`;
+                    item.innerHTML = `
+                        <div>
+                            <div style="font-size:1.2rem">${q.title}</div>
+                            <div class="quest-reward">+${q.reward} XP</div>
+                        </div>
+                        <div>
+                            <button onclick="toggleQuest('${doc.id}', ${q.completed})">√</button>
+                            <button onclick="deleteQuest('${doc.id}')" style="background:transparent; color:var(--pip-green); border:1px solid var(--pip-green)">X</button>
+                        </div>
+                    `;
+                    listDiv.appendChild(item);
+                });
+            });
+    }
+
+    async function addQuest() {
+        const title = document.getElementById('questInput').value;
+        const reward = document.getElementById('rewardInput').value || "0";
+        if (!title) return;
+
+        await db.collection("vaults").doc(currentVault).collection("sidequests").add({
+            title: title,
+            reward: reward,
+            completed: false,
+            createdAt: firebase.firestore.FieldValue.serverTimestamp()
+        });
+        document.getElementById('questInput').value = '';
+    }
+
+    async function toggleQuest(id, status) {
+        await db.collection("vaults").doc(currentVault).collection("sidequests").doc(id).update({
+            completed: !status
+        });
+    }
+
+    async function deleteQuest(id) {
+        if(confirm("Abandon Quest?")) {
+            await db.collection("vaults").doc(currentVault).collection("sidequests").doc(id).delete();
+        }
+    }
+
+    function logout() {
+        auth.signOut();
+        localStorage.removeItem('vaultKey');
+        location.reload();
+    }
+</script>
+</body>
+</html>
